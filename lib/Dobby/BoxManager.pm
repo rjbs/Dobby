@@ -339,6 +339,7 @@ async sub _setup_droplet ($self, $spec, $droplet, $key_file) {
       '-o', 'UserKnownHostsFile=/dev/null',
       '-o', 'StrictHostKeyChecking=no',
       '-o', 'ControlMaster=no',
+      '-o', 'SetEnv=FM_LOGSTREAM=1',
 
     $ip_address,
     (
