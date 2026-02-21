@@ -1,0 +1,68 @@
+#!/usr/bin/env perl
+use v5.36;
+
+$| = 1;
+
+# This program demonstrates the TASK:: taskstream protocol understood by
+# "box run" and "box create".  Run it with:
+#
+#   box run LABEL perl - < eg/demo-taskstream
+#
+# or copy it to the remote box and run it directly.
+
+# Phase 1: pre-task output
+# - lines before any TASK::START pass straight through to the terminal
+say "Checking prerequisites...";
+sleep 1;
+say "Perl version: $]";
+sleep 1;
+say "All checks passed.";
+sleep 1;
+
+# Phase 2: successful tasks
+# - TASK::START begins an animated countdown; a second TASK::START implicitly
+#   completes the first.
+
+say "TASK::START::Install dependencies";
+say "Building Foo-1.23...";
+sleep 2;
+say "Building Bar-4.56...";
+sleep 2;
+say "All modules built.";
+
+# Starting a new task implicitly completes the previous one.
+say "TASK::START::Run test suite";
+say "t/basic.t .... ok";
+sleep 1;
+say "t/advanced.t . ok";
+sleep 2;
+say "All tests passed.";
+
+# Phase 3: task with a non-fatal error
+# - TASK::ERROR flushes buffered output (indented) and prints an error line,
+#   but the task stays active.
+
+# Starting this task implicitly completes "Run test suite".
+say "TASK::START::Deploy to staging";
+say "Uploading build artifacts...";
+sleep 2;
+say "Warning: artifact checksum mismatch on foo.tar.gz";
+say "Retrying upload...";
+sleep 1;
+
+# TASK::ERROR flushes the buffer and prints the error, but the task continues.
+say "TASK::ERROR::checksum mismatch on foo.tar.gz (retrying)";
+sleep 1;
+say "Re-upload succeeded.";
+say "Contacting staging host...";
+sleep 2;
+say "Deployment confirmed.";
+
+# Phase 4: TASK::FINISH
+# - completes the task without starting a new one; subsequent lines pass
+# straight through.
+
+say "TASK::FINISH";
+say "Post-deploy smoke test: OK";
+sleep 1;
+say "All done.";

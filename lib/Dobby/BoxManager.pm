@@ -44,7 +44,7 @@ for my $type (qw( error log message )) {
   );
 }
 
-# logstream_cb is called repeatedly with complete-line chunks as they arrive
+# taskstream_cb is called repeatedly with complete-line chunks as they arrive
 # from the setup process.  When the process exits it is called once more with
 # (undef, $success_bool) to signal end-of-stream and convey the outcome.
 #
@@ -52,10 +52,10 @@ for my $type (qw( error log message )) {
 # (\$accumulated_text, { success => $bool }).
 #
 # Exactly one of these must be provided; see BUILD.
-has logstream_cb => (
+has taskstream_cb => (
   is        => 'ro',
   isa       => 'CodeRef',
-  predicate => 'has_logstream_cb',
+  predicate => 'has_taskstream_cb',
 );
 
 has logsnippet_cb => (
@@ -65,12 +65,12 @@ has logsnippet_cb => (
 );
 
 sub BUILD ($self, @) {
-  unless ($self->has_logstream_cb || $self->has_logsnippet_cb) {
-    Carp::confess("BoxManager requires one of logstream_cb or logsnippet_cb but neither was provided");
+  unless ($self->has_taskstream_cb || $self->has_logsnippet_cb) {
+    Carp::confess("BoxManager requires one of taskstream_cb or logsnippet_cb but neither was provided");
   }
 
-  if ($self->has_logstream_cb && $self->has_logsnippet_cb) {
-    Carp::confess("BoxManager requires one of logstream_cb or logsnippet_cb but both were provided");
+  if ($self->has_taskstream_cb && $self->has_logsnippet_cb) {
+    Carp::confess("BoxManager requires one of taskstream_cb or logsnippet_cb but both were provided");
   }
 }
 
@@ -339,7 +339,7 @@ async sub _setup_droplet ($self, $spec, $droplet, $key_file) {
       '-o', 'UserKnownHostsFile=/dev/null',
       '-o', 'StrictHostKeyChecking=no',
       '-o', 'ControlMaster=no',
-      '-o', 'SetEnv=FM_LOGSTREAM=1',
+      '-o', 'SetEnv=FM_TASKSTREAM=1',
 
     $ip_address,
     (
@@ -353,14 +353,14 @@ async sub _setup_droplet ($self, $spec, $droplet, $key_file) {
 
   $self->handle_log([ "about to run ssh: %s", \@ssh_command ]);
 
-  my $logstream_cb;
-  if ($self->has_logstream_cb) {
-    $logstream_cb = $self->logstream_cb;
+  my $taskstream_cb;
+  if ($self->has_taskstream_cb) {
+    $taskstream_cb = $self->taskstream_cb;
   } else {
     # Only logsnippet_cb: synthesize a streaming callback around it.
 
     my $buffer = '';
-    $logstream_cb = sub ($line, $success = undef) {
+    $taskstream_cb = sub ($line, $success = undef) {
       if (defined $line) { $buffer .= $line }
       else               { $self->logsnippet_cb->(\$buffer, { success => $success }) }
     };
@@ -368,11 +368,11 @@ async sub _setup_droplet ($self, $spec, $droplet, $key_file) {
 
   my $exitcode = await $self->_run_process_streaming(
     \@ssh_command,
-    $logstream_cb,
+    $taskstream_cb,
   );
 
   my $exit_success = ($exitcode == 0) ? 1 : 0;
-  $logstream_cb->(undef, $exit_success);  # end-of-stream sentinel
+  $taskstream_cb->(undef, $exit_success);  # end-of-stream sentinel
 
   $self->handle_log([ "result of ssh: %s", Process::Status->new($exitcode)->as_string ]);
 

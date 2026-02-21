@@ -2,9 +2,9 @@ use v5.36.0;
 use utf8;
 
 use Test::More;
-use Dobby::Boxmate::LogStream;
+use Dobby::Boxmate::TaskStream;
 
-my sub cb { Dobby::Boxmate::LogStream->new_logstream_cb }
+my sub cb { Dobby::Boxmate::TaskStream->new_taskstream_cb }
 
 # Capture everything printed to STDOUT by $code and return it as a list of
 # lines (trailing newlines stripped, trailing empty entry dropped).
@@ -47,8 +47,8 @@ subtest "header only prints once, before the first directive" => sub {
 subtest "header not printed after a directive has been seen" => sub {
   my $cb = cb();
   my @lines = lines_from(sub {
-    $cb->("BOX::START::step one\n");
-    $cb->("BOX::FINISH\n");
+    $cb->("TASK::START::step one\n");
+    $cb->("TASK::FINISH\n");
     $cb->("post-finish data\n");
     $cb->(undef, 1);
   });
@@ -72,7 +72,7 @@ subtest "failure with no task emits EOS failure message" => sub {
 subtest "START then success EOS" => sub {
   my $cb = cb();
   my @lines = lines_from(sub {
-    $cb->("BOX::START::install packages\n");
+    $cb->("TASK::START::install packages\n");
     $cb->(undef, 1);
   });
   is scalar @lines, 2, 'exactly two output lines';
@@ -83,7 +83,7 @@ subtest "START then success EOS" => sub {
 subtest "data lines during a task are buffered, not printed" => sub {
   my $cb = cb();
   my @lines = lines_from(sub {
-    $cb->("BOX::START::do stuff\n");
+    $cb->("TASK::START::do stuff\n");
     $cb->("secret output 1\n");
     $cb->("secret output 2\n");
     $cb->(undef, 1);
@@ -92,14 +92,14 @@ subtest "data lines during a task are buffered, not printed" => sub {
   is scalar @lines, 2, 'only currently + completed';
 };
 
-# ── BOX::ERROR ────────────────────────────────────────────────────────────────
+# ── TASK::ERROR ────────────────────────────────────────────────────────────────
 
 subtest "ERROR flushes buffer indented, prints error line, task stays active" => sub {
   my $cb = cb();
   my @lines = lines_from(sub {
-    $cb->("BOX::START::configure samba\n");
+    $cb->("TASK::START::configure samba\n");
     $cb->("samba error output\n");
-    $cb->("BOX::ERROR::connection refused\n");
+    $cb->("TASK::ERROR::connection refused\n");
     $cb->(undef, 1);
   });
   # [0] Currently: configure samba
@@ -119,8 +119,8 @@ subtest "ERROR flushes buffer indented, prints error line, task stays active" =>
 subtest "ERROR with empty buffer just prints the error line" => sub {
   my $cb = cb();
   my @lines = lines_from(sub {
-    $cb->("BOX::START::step\n");
-    $cb->("BOX::ERROR::something bad\n");
+    $cb->("TASK::START::step\n");
+    $cb->("TASK::ERROR::something bad\n");
     $cb->(undef, 1);
   });
   is scalar @lines, 4;
@@ -133,11 +133,11 @@ subtest "ERROR with empty buffer just prints the error line" => sub {
 subtest "multiple buffered lines all printed in order on ERROR" => sub {
   my $cb = cb();
   my @lines = lines_from(sub {
-    $cb->("BOX::START::frobulate\n");
+    $cb->("TASK::START::frobulate\n");
     $cb->("first\n");
     $cb->("second\n");
     $cb->("third\n");
-    $cb->("BOX::ERROR::it broke\n");
+    $cb->("TASK::ERROR::it broke\n");
     $cb->(undef, 1);
   });
   is   $lines[1], '    first';
@@ -149,22 +149,22 @@ subtest "multiple buffered lines all printed in order on ERROR" => sub {
 subtest "buffer is cleared after ERROR; subsequent data is re-buffered" => sub {
   my $cb = cb();
   my @lines = lines_from(sub {
-    $cb->("BOX::START::work\n");
+    $cb->("TASK::START::work\n");
     $cb->("before error\n");
-    $cb->("BOX::ERROR::oops\n");
+    $cb->("TASK::ERROR::oops\n");
     $cb->("after error\n");
     $cb->(undef, 1);
   });
   ok !grep({ /after error/ } @lines), 'post-error buffered line not printed on success';
 };
 
-# ── BOX::FINISH ───────────────────────────────────────────────────────────────
+# ── TASK::FINISH ───────────────────────────────────────────────────────────────
 
 subtest "FINISH completes the current task" => sub {
   my $cb = cb();
   my @lines = lines_from(sub {
-    $cb->("BOX::START::do thing\n");
-    $cb->("BOX::FINISH\n");
+    $cb->("TASK::START::do thing\n");
+    $cb->("TASK::FINISH\n");
     $cb->(undef, 1);
   });
   is scalar @lines, 2;
@@ -175,8 +175,8 @@ subtest "FINISH completes the current task" => sub {
 subtest "data lines pass through after FINISH" => sub {
   my $cb = cb();
   my @lines = lines_from(sub {
-    $cb->("BOX::START::do thing\n");
-    $cb->("BOX::FINISH\n");
+    $cb->("TASK::START::do thing\n");
+    $cb->("TASK::FINISH\n");
     $cb->("post-finish line\n");
     $cb->(undef, 1);
   });
@@ -187,9 +187,9 @@ subtest "data lines pass through after FINISH" => sub {
 subtest "FINISH after ERROR uses star and 'with errors' suffix" => sub {
   my $cb = cb();
   my @lines = lines_from(sub {
-    $cb->("BOX::START::deploy\n");
-    $cb->("BOX::ERROR::hiccup\n");
-    $cb->("BOX::FINISH\n");
+    $cb->("TASK::START::deploy\n");
+    $cb->("TASK::ERROR::hiccup\n");
+    $cb->("TASK::FINISH\n");
   });
   like $lines[-1], qr/\A\x{2734}/;
   like $lines[-1], qr/Completed: deploy \(\d+s\) with errors\z/;
@@ -200,7 +200,7 @@ subtest "FINISH after ERROR uses star and 'with errors' suffix" => sub {
 subtest "ERROR in NoTask emits cross and message, no header" => sub {
   my $cb = cb();
   my @lines = lines_from(sub {
-    $cb->("BOX::ERROR::something went wrong\n");
+    $cb->("TASK::ERROR::something went wrong\n");
     $cb->(undef, 1);
   });
   is scalar @lines, 1;
@@ -210,7 +210,7 @@ subtest "ERROR in NoTask emits cross and message, no header" => sub {
 subtest "FINISH in NoTask emits interrobang message" => sub {
   my $cb = cb();
   my @lines = lines_from(sub {
-    $cb->("BOX::FINISH\n");
+    $cb->("TASK::FINISH\n");
     $cb->(undef, 1);
   });
   is scalar @lines, 1;
@@ -222,8 +222,8 @@ subtest "FINISH in NoTask emits interrobang message" => sub {
 subtest "second START implicitly completes the first task" => sub {
   my $cb = cb();
   my @lines = lines_from(sub {
-    $cb->("BOX::START::task one\n");
-    $cb->("BOX::START::task two\n");
+    $cb->("TASK::START::task one\n");
+    $cb->("TASK::START::task two\n");
     $cb->(undef, 1);
   });
   is scalar @lines, 4, 'four output lines';
@@ -236,9 +236,9 @@ subtest "second START implicitly completes the first task" => sub {
 subtest "implicit completion via START also honours had_error" => sub {
   my $cb = cb();
   my @lines = lines_from(sub {
-    $cb->("BOX::START::task one\n");
-    $cb->("BOX::ERROR::oops\n");
-    $cb->("BOX::START::task two\n");
+    $cb->("TASK::START::task one\n");
+    $cb->("TASK::ERROR::oops\n");
+    $cb->("TASK::START::task two\n");
     $cb->(undef, 1);
   });
   like $lines[-3], qr/\A\x{2734}/,                                       'task one starts with eight-pointed star';
@@ -252,7 +252,7 @@ subtest "implicit completion via START also honours had_error" => sub {
 subtest "failed EOS with running task dumps buffer and uses task name" => sub {
   my $cb = cb();
   my @lines = lines_from(sub {
-    $cb->("BOX::START::important step\n");
+    $cb->("TASK::START::important step\n");
     $cb->("accumulated output\n");
     $cb->(undef, 0);
   });

@@ -6,7 +6,7 @@ use App::Cmd::Setup -app => {};
 use v5.36.0;
 use utf8;
 
-use Dobby::Boxmate::LogStream;
+use Dobby::Boxmate::TaskStream;
 
 sub config ($self) {
   return $self->{_config} if $self->{_config};
@@ -42,9 +42,9 @@ sub boxman ($self, %opts) {
 
   $self->_loop->add($dobby);
 
-  my $logstream_cb = $opts{verbose_setup}
+  my $taskstream_cb = $opts{verbose_setup}
     ? sub ($line, @) { print $line if defined $line }
-    : Dobby::Boxmate::LogStream->new_logstream_cb({ loop => $self->_loop });
+    : Dobby::Boxmate::TaskStream->new_taskstream_cb({ loop => $self->_loop });
 
   my $config = $self->config;
   $self->{_boxman} = Dobby::BoxManager->new({
@@ -54,7 +54,7 @@ sub boxman ($self, %opts) {
     error_cb      => sub ($err) { die "❌ $err\n" },
     log_cb        => sub ($log) { say "🔸 " . String::Flogger->flog($log) },
     message_cb    => sub ($msg) { say "🔹 $msg" },
-    logstream_cb  => $logstream_cb,
+    taskstream_cb => $taskstream_cb,
   });
 }
 

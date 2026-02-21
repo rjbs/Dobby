@@ -1,5 +1,5 @@
-package Dobby::Boxmate::LogStream;
-# ABSTRACT: handler for a lightweight output-aggregating protocol
+package Dobby::Boxmate::TaskStream;
+# ABSTRACT: handler for a lightweight output-annotating protocol
 
 use v5.36.0;
 use utf8;
@@ -15,14 +15,14 @@ my sub _fmt_dur ($secs) {
 
 When a box is being set up, the remote C<fmdev mysetup> script can emit
 directives mixed in with ordinary output lines.  This module provides a
-C<new_logstream_cb> method, which returns a stateful callback suitable for use
-as a C<logstream_cb> on L<Dobby::BoxManager>.  The callback interprets the
+C<new_taskstream_cb> method, which returns a stateful callback suitable for use
+as a C<taskstream_cb> on L<Dobby::BoxManager>.  The callback interprets the
 directives and displays concise task-progress lines in place of the raw output
 stream.
 
 To get a callback:
 
-  my $code = Dobby::Boxmate::LogStream->new_logstream_cb(\%arg);
+  my $code = Dobby::Boxmate::TaskStream->new_taskstream_cb(\%arg);
 
 The only meaningful argument to pass is:
 
@@ -30,12 +30,12 @@ The only meaningful argument to pass is:
 
 =head2 The Protocol
 
-The LogStream protocol is line-oriented.  Each line is either a directive or a
+The TaskStream protocol is line-oriented.  Each line is either a directive or a
 data line.  A directive is a line in one of these formats:
 
-  BOX::START::$task_name
-  BOX::ERROR::$message
-  BOX::FINISH
+  TASK::START::$task_name
+  TASK::ERROR::$message
+  TASK::FINISH
 
 The stream reader is always in one of two states: I<in-task> or I<no-task>.
 
@@ -43,19 +43,19 @@ The stream reader is always in one of two states: I<in-task> or I<no-task>.
 
 =item *
 
-C<BOX::START> implicitly completes the previous task (if any), then announces
+C<TASK::START> implicitly completes the previous task (if any), then announces
 the new one.  Data lines received while a task is active are buffered
 silently.
 
 =item *
 
-C<BOX::ERROR> reports a non-fatal error within the current task.  The buffered
+C<TASK::ERROR> reports a non-fatal error within the current task.  The buffered
 data is flushed (indented), followed by an error indicator.  The task remains
 active.
 
 =item *
 
-C<BOX::FINISH> successfully completes the current task without starting a new
+C<TASK::FINISH> successfully completes the current task without starting a new
 one.  Subsequent data lines are passed straight through.
 
 =item *
@@ -66,13 +66,13 @@ In the I<no-task> state, data lines are passed through without buffering.
 
 =cut
 
-sub new_logstream_cb ($class, $arg = undef) {
+sub new_taskstream_cb ($class, $arg = undef) {
   $arg //= {};
 
   my $loop     = $arg->{loop};
   my $animated = $loop && -t STDOUT;
 
-  my $state = Dobby::Boxmate::LogStream::NoTask->new({
+  my $state = Dobby::Boxmate::TaskStream::NoTask->new({
     loop              => $loop,
     animated          => $animated,
     prelude_permitted => 1,
@@ -88,7 +88,7 @@ sub new_logstream_cb ($class, $arg = undef) {
   };
 }
 
-package Dobby::Boxmate::LogStream::_State {
+package Dobby::Boxmate::TaskStream::_State {
   sub new ($class, $args) {
     return bless { loop => $args->{loop}, animated => $args->{animated} }, $class;
   }
@@ -98,7 +98,7 @@ package Dobby::Boxmate::LogStream::_State {
   }
 
   sub _new_in_task ($self, $name) {
-    return Dobby::Boxmate::LogStream::InTask->new({
+    return Dobby::Boxmate::TaskStream::InTask->new({
       name     => $name,
       loop     => $self->{loop},
       animated => $self->{animated},
@@ -106,7 +106,7 @@ package Dobby::Boxmate::LogStream::_State {
   }
 
   sub _new_no_task ($self) {
-    return Dobby::Boxmate::LogStream::NoTask->new({
+    return Dobby::Boxmate::TaskStream::NoTask->new({
       loop              => $self->{loop},
       animated          => $self->{animated},
       prelude_permitted => 0,
@@ -114,8 +114,8 @@ package Dobby::Boxmate::LogStream::_State {
   }
 }
 
-package Dobby::Boxmate::LogStream::NoTask {
-  use parent -norequire, 'Dobby::Boxmate::LogStream::_State';
+package Dobby::Boxmate::TaskStream::NoTask {
+  use parent -norequire, 'Dobby::Boxmate::TaskStream::_State';
 
   sub new ($class, $args) {
     my $self = $class->SUPER::new($args);
@@ -124,16 +124,16 @@ package Dobby::Boxmate::LogStream::NoTask {
   }
 
   sub on_line ($self, $line) {
-    if ($line =~ /\ABOX::START::(.+)\Z/) {
+    if ($line =~ /\ATASK::START::(.+)\Z/) {
       return $self->_new_in_task($1);
     }
 
-    if ($line =~ /\ABOX::ERROR::(.+)\Z/) {
+    if ($line =~ /\ATASK::ERROR::(.+)\Z/) {
       say "\N{CROSS MARK} $1";
       return $self;
     }
 
-    if ($line =~ /\ABOX::FINISH\Z/) {
+    if ($line =~ /\ATASK::FINISH\Z/) {
       say "\x{2049}\x{fe0f} Unexpected task completion event";
       return $self;
     }
@@ -153,8 +153,8 @@ package Dobby::Boxmate::LogStream::NoTask {
 }
 
 # InTask: a task is active
-package Dobby::Boxmate::LogStream::InTask {
-  use parent -norequire, 'Dobby::Boxmate::LogStream::_State';
+package Dobby::Boxmate::TaskStream::InTask {
+  use parent -norequire, 'Dobby::Boxmate::TaskStream::_State';
 
   sub new ($class, $args) {
     my $self = {
@@ -231,17 +231,17 @@ package Dobby::Boxmate::LogStream::InTask {
   }
 
   sub on_line ($self, $line) {
-    if ($line =~ /\ABOX::START::(.+)\Z/) {
+    if ($line =~ /\ATASK::START::(.+)\Z/) {
       $self->_do_finish;
       return $self->_new_in_task($1);
     }
 
-    if ($line =~ /\ABOX::ERROR::(.+)\Z/) {
+    if ($line =~ /\ATASK::ERROR::(.+)\Z/) {
       $self->_do_error($1);
       return $self;
     }
 
-    if ($line =~ /\ABOX::FINISH\Z/) {
+    if ($line =~ /\ATASK::FINISH\Z/) {
       $self->_do_finish;
       return $self->_new_no_task;
     }
