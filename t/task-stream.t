@@ -1,265 +1,233 @@
 use v5.36.0;
 use utf8;
 
-use Test::More;
+use Carp ();
 use Dobby::Boxmate::TaskStream;
+use Encode ();
 
-my sub cb { Dobby::Boxmate::TaskStream->new_taskstream_cb }
+use Test::More;
+use Test::Deep;
+
+my $WARNING   = "\x{26a0}\x{fe0f}";
+my $CROSS     = "\x{274c}";
+my $WEIRD     = "\x{2049}\x{fe0f}";
+my $HOURGLASS = "\x{23f3}";
+my $CHECK     = "\x{2705}";
+my $STAR      = "\x{2734}\x{fe0f}";
 
 # Capture everything printed to STDOUT by $code and return it as a list of
 # lines (trailing newlines stripped, trailing empty entry dropped).
 sub lines_from ($code) {
-  my $buf = '';
+  my $buf = q{};
   open my $fh, '>', \$buf or die "open: $!";
+
+  # I guess you can't apply :encoding(UTF-8) to scalar fh??
   binmode $fh, ':utf8';
+
   local *STDOUT = $fh;
   $code->();
-  utf8::decode($buf);
+  $buf = Encode::decode('utf-8', $buf);
   my @lines = split /\n/, $buf;
   return @lines;
 }
 
-# ── pass-through mode (no active task) ───────────────────────────────────────
+# Feed @$input as lines to a fresh callback, then signal EOS with the last
+# element (which must be 0 or 1), and compare the output to $test_deep_arg.
+sub output_ok ($input, $test_deep_arg, $desc) {
+  local $Test::Builder::Level = $Test::Builder::Level + 1;
 
-subtest "data lines pass through when no task is active" => sub {
-  my $cb = cb();
+  my @input_lines = @$input;
+  my $success = pop @input_lines;
+
+  Carp::croak("last element of output_ok input arrayref should be 0 or 1")
+    unless defined $success && ($success eq 1 or $success eq 0);
+
+  my $streamer = Dobby::Boxmate::TaskStream->new_taskstream_cb;
+
   my @lines = lines_from(sub {
-    $cb->("line one\n");
-    $cb->("line two\n");
-    $cb->(undef, 1);
+    $streamer->("$_\n") for @input_lines;
+    $streamer->(undef, $success);
   });
-  is_deeply \@lines,
-    ["\x{26a0}\x{fe0f} Now receiving streamed logs...", 'line one', 'line two'],
-    'lines preceded by one-time header';
-};
 
-subtest "header only prints once, before the first directive" => sub {
-  my $cb = cb();
-  my @lines = lines_from(sub {
-    $cb->("first line\n");
-    $cb->("second line\n");
-    $cb->(undef, 1);
-  });
-  is scalar(grep { /receiving/ } @lines), 1, 'header appears exactly once';
-  is $lines[0], "\x{26a0}\x{fe0f} Now receiving streamed logs...", 'header is first';
-};
+  cmp_deeply(\@lines, $test_deep_arg, $desc);
+}
 
-subtest "header not printed after a directive has been seen" => sub {
-  my $cb = cb();
-  my @lines = lines_from(sub {
-    $cb->("TASK::START::step one\n");
-    $cb->("TASK::FINISH\n");
-    $cb->("post-finish data\n");
-    $cb->(undef, 1);
-  });
-  ok !grep({ /receiving/ } @lines), 'no header after a directive was seen';
-};
+output_ok(
+  ["line one", "line two", 1],
+  ["$WARNING Now receiving streamed logs...", 'line one', 'line two'],
+  'data lines pass through when no task is active',
+);
 
-subtest "success with no task produces no output" => sub {
-  my $cb = cb();
-  my @lines = lines_from(sub { $cb->(undef, 1) });
-  is scalar @lines, 0, 'nothing printed';
-};
+output_ok(
+  ["first line", "second line", 1],
+  ["$WARNING Now receiving streamed logs...", 'first line', 'second line'],
+  'header only prints once, before the first directive',
+);
 
-subtest "failure with no task emits EOS failure message" => sub {
-  my $cb = cb();
-  my @lines = lines_from(sub { $cb->(undef, 0) });
-  is_deeply \@lines, ["\x{274c} Failed: process failure"];
-};
+output_ok(
+  ["TASK::START::step one", "TASK::FINISH", "post-finish data", 1],
+  [
+    "$HOURGLASS Currently: step one",
+    re(qr/\A$CHECK Completed: step one \(\d+s\)\z/),
+    'post-finish data',
+  ],
+  'header not printed after a directive has been seen',
+);
 
-# ── single task, success ──────────────────────────────────────────────────────
+output_ok([1], [], 'success with no task produces no output');
 
-subtest "START then success EOS" => sub {
-  my $cb = cb();
-  my @lines = lines_from(sub {
-    $cb->("TASK::START::install packages\n");
-    $cb->(undef, 1);
-  });
-  is scalar @lines, 2, 'exactly two output lines';
-  is   $lines[0], "\x{23f3} Currently: install packages",                'currently line';
-  like $lines[1], qr/\A\x{2705} Completed: install packages \(\d+s\)\z/, 'completed line';
-};
+output_ok(
+  [0],
+  ["$CROSS Failed: process failure"],
+  'failure with no task emits EOS failure message',
+);
 
-subtest "data lines during a task are buffered, not printed" => sub {
-  my $cb = cb();
-  my @lines = lines_from(sub {
-    $cb->("TASK::START::do stuff\n");
-    $cb->("secret output 1\n");
-    $cb->("secret output 2\n");
-    $cb->(undef, 1);
-  });
-  ok !grep({ /secret/ } @lines), 'buffered lines absent from output on success';
-  is scalar @lines, 2, 'only currently + completed';
-};
+output_ok(
+  ["TASK::START::install packages", 1],
+  [
+    "$HOURGLASS Currently: install packages",
+    re(qr/\A$CHECK Completed: install packages \(\d+s\)\z/),
+  ],
+  'START then success EOS',
+);
 
-# ── TASK::ERROR ────────────────────────────────────────────────────────────────
+output_ok(
+  ["TASK::START::do stuff", "secret output 1", "secret output 2", 1],
+  [
+    "$HOURGLASS Currently: do stuff",
+    re(qr/\A$CHECK Completed: do stuff \(\d+s\)\z/),
+  ],
+  'data lines during a task are buffered, not printed',
+);
 
-subtest "ERROR flushes buffer indented, prints error line, task stays active" => sub {
-  my $cb = cb();
-  my @lines = lines_from(sub {
-    $cb->("TASK::START::configure samba\n");
-    $cb->("samba error output\n");
-    $cb->("TASK::ERROR::connection refused\n");
-    $cb->(undef, 1);
-  });
-  # [0] Currently: configure samba
-  # [1]     samba error output        (indented)
-  # [2]     ❌ connection refused     (indented error)
-  # [3] Currently: configure samba    (re-shown after error)
-  # [4] ✴️ Completed: ... with errors
-  is scalar @lines, 5, 'five output lines';
-  is   $lines[0], "\x{23f3} Currently: configure samba",                  'currently line';
-  is   $lines[1], '    samba error output',                               'buffered line indented';
-  is   $lines[2], "    \x{274c} connection refused",                      'error line indented';
-  is   $lines[3], "\x{23f3} Currently: configure samba",                  'currently re-shown';
-  like   $lines[4], qr/\A\x{2734}/,                                       'starts with eight-pointed star';
-  like   $lines[4], qr/Completed: configure samba \(\d+s\) with errors\z/, 'completed with errors';
-};
+output_ok(
+  ["TASK::START::configure samba", "samba error output", "TASK::ERROR::connection refused", 1],
+  [
+    # [0] Currently: configure samba
+    # [1]     samba error output        (indented)
+    # [2]     ❌ connection refused     (indented error)
+    # [3] Currently: configure samba    (re-shown after error)
+    # [4] ✴️ Completed: ... with errors
+    "$HOURGLASS Currently: configure samba",
+    '    samba error output',
+    "    $CROSS connection refused",
+    "$HOURGLASS Currently: configure samba",
+    re(qr/\A$STAR Completed: configure samba \(\d+s\) with errors\z/),
+  ],
+  'ERROR flushes buffer indented, prints error line, task stays active',
+);
 
-subtest "ERROR with empty buffer just prints the error line" => sub {
-  my $cb = cb();
-  my @lines = lines_from(sub {
-    $cb->("TASK::START::step\n");
-    $cb->("TASK::ERROR::something bad\n");
-    $cb->(undef, 1);
-  });
-  is scalar @lines, 4;
-  is   $lines[0], "\x{23f3} Currently: step";
-  is   $lines[1], "    \x{274c} something bad",       'error line, no preceding buffer';
-  is   $lines[2], "\x{23f3} Currently: step";
-  like $lines[3], qr/with errors\z/,                  'completed with errors';
-};
+output_ok(
+  ["TASK::START::step", "TASK::ERROR::something bad", 1],
+  [
+    "$HOURGLASS Currently: step",
+    "    $CROSS something bad",
+    "$HOURGLASS Currently: step",
+    re(qr/with errors\z/),
+  ],
+  'ERROR with empty buffer just prints the error line',
+);
 
-subtest "multiple buffered lines all printed in order on ERROR" => sub {
-  my $cb = cb();
-  my @lines = lines_from(sub {
-    $cb->("TASK::START::frobulate\n");
-    $cb->("first\n");
-    $cb->("second\n");
-    $cb->("third\n");
-    $cb->("TASK::ERROR::it broke\n");
-    $cb->(undef, 1);
-  });
-  is   $lines[1], '    first';
-  is   $lines[2], '    second';
-  is   $lines[3], '    third';
-  is   $lines[4], "    \x{274c} it broke";
-};
+output_ok(
+  ["TASK::START::frobulate", "first", "second", "third", "TASK::ERROR::it broke", 1],
+  [
+    "$HOURGLASS Currently: frobulate",
+    '    first',
+    '    second',
+    '    third',
+    "    $CROSS it broke",
+    "$HOURGLASS Currently: frobulate",
+    re(qr/with errors\z/),
+  ],
+  'multiple buffered lines all printed in order on ERROR',
+);
 
-subtest "buffer is cleared after ERROR; subsequent data is re-buffered" => sub {
-  my $cb = cb();
-  my @lines = lines_from(sub {
-    $cb->("TASK::START::work\n");
-    $cb->("before error\n");
-    $cb->("TASK::ERROR::oops\n");
-    $cb->("after error\n");
-    $cb->(undef, 1);
-  });
-  ok !grep({ /after error/ } @lines), 'post-error buffered line not printed on success';
-};
+output_ok(
+  ["TASK::START::work", "before error", "TASK::ERROR::oops", "after error", 1],
+  [
+    "$HOURGLASS Currently: work",
+    '    before error',
+    "    $CROSS oops",
+    "$HOURGLASS Currently: work",
+    re(qr/with errors\z/),
+  ],
+  'buffer is cleared after ERROR; subsequent data is re-buffered',
+);
 
-# ── TASK::FINISH ───────────────────────────────────────────────────────────────
+output_ok(
+  ["TASK::START::do thing", "TASK::FINISH", 1],
+  [
+    "$HOURGLASS Currently: do thing",
+    re(qr/\A$CHECK Completed: do thing \(\d+s\)\z/),
+  ],
+  'FINISH completes the current task',
+);
 
-subtest "FINISH completes the current task" => sub {
-  my $cb = cb();
-  my @lines = lines_from(sub {
-    $cb->("TASK::START::do thing\n");
-    $cb->("TASK::FINISH\n");
-    $cb->(undef, 1);
-  });
-  is scalar @lines, 2;
-  is   $lines[0], "\x{23f3} Currently: do thing",                   'currently line';
-  like $lines[1], qr/\A\x{2705} Completed: do thing \(\d+s\)\z/,   'completed line';
-};
+output_ok(
+  ["TASK::START::do thing", "TASK::FINISH", "post-finish line", 1],
+  [
+    "$HOURGLASS Currently: do thing",
+    re(qr/\A$CHECK Completed: do thing \(\d+s\)\z/),
+    'post-finish line',
+  ],
+  'data lines pass through after FINISH',
+);
 
-subtest "data lines pass through after FINISH" => sub {
-  my $cb = cb();
-  my @lines = lines_from(sub {
-    $cb->("TASK::START::do thing\n");
-    $cb->("TASK::FINISH\n");
-    $cb->("post-finish line\n");
-    $cb->(undef, 1);
-  });
-  is scalar @lines, 3;
-  is $lines[2], 'post-finish line', 'line passes through without header';
-};
+output_ok(
+  ["TASK::START::deploy", "TASK::ERROR::hiccup", "TASK::FINISH", 1],
+  [
+    "$HOURGLASS Currently: deploy",
+    "    $CROSS hiccup",
+    "$HOURGLASS Currently: deploy",
+    re(qr/\A$STAR Completed: deploy \(\d+s\) with errors\z/),
+  ],
+  "FINISH after ERROR uses star and 'with errors' suffix",
+);
 
-subtest "FINISH after ERROR uses star and 'with errors' suffix" => sub {
-  my $cb = cb();
-  my @lines = lines_from(sub {
-    $cb->("TASK::START::deploy\n");
-    $cb->("TASK::ERROR::hiccup\n");
-    $cb->("TASK::FINISH\n");
-  });
-  like $lines[-1], qr/\A\x{2734}/;
-  like $lines[-1], qr/Completed: deploy \(\d+s\) with errors\z/;
-};
+output_ok(
+  ["TASK::ERROR::something went wrong", 1],
+  ["$CROSS something went wrong"],
+  'ERROR in NoTask emits cross and message, no header',
+);
 
-# ── unexpected directives in NoTask ──────────────────────────────────────────
+output_ok(
+  ["TASK::FINISH", 1],
+  ["$WEIRD Unexpected task completion event"],
+  'FINISH in NoTask emits interrobang message',
+);
 
-subtest "ERROR in NoTask emits cross and message, no header" => sub {
-  my $cb = cb();
-  my @lines = lines_from(sub {
-    $cb->("TASK::ERROR::something went wrong\n");
-    $cb->(undef, 1);
-  });
-  is scalar @lines, 1;
-  is $lines[0], "\x{274c} something went wrong", 'cross and message, no indent';
-};
+output_ok(
+  ["TASK::START::task one", "TASK::START::task two", 1],
+  [
+    "$HOURGLASS Currently: task one",
+    re(qr/\A$CHECK Completed: task one \(\d+s\)\z/),
+    "$HOURGLASS Currently: task two",
+    re(qr/\A$CHECK Completed: task two \(\d+s\)\z/),
+  ],
+  'second START implicitly completes the first task',
+);
 
-subtest "FINISH in NoTask emits interrobang message" => sub {
-  my $cb = cb();
-  my @lines = lines_from(sub {
-    $cb->("TASK::FINISH\n");
-    $cb->(undef, 1);
-  });
-  is scalar @lines, 1;
-  is $lines[0], "\x{2049}\x{fe0f} Unexpected task completion event";
-};
+output_ok(
+  ["TASK::START::task one", "TASK::ERROR::oops", "TASK::START::task two", 1],
+  [
+    "$HOURGLASS Currently: task one",
+    "    $CROSS oops",
+    "$HOURGLASS Currently: task one",
+    re(qr/\A$STAR Completed: task one \(\d+s\) with errors\z/),
+    "$HOURGLASS Currently: task two",
+    re(qr/\A$CHECK Completed: task two \(\d+s\)\z/),
+  ],
+  'implicit completion via START also honours had_error',
+);
 
-# ── implicit completion via START ─────────────────────────────────────────────
-
-subtest "second START implicitly completes the first task" => sub {
-  my $cb = cb();
-  my @lines = lines_from(sub {
-    $cb->("TASK::START::task one\n");
-    $cb->("TASK::START::task two\n");
-    $cb->(undef, 1);
-  });
-  is scalar @lines, 4, 'four output lines';
-  is   $lines[0], "\x{23f3} Currently: task one",                          'currently task one';
-  like $lines[1], qr/\A\x{2705} Completed: task one \(\d+s\)\z/,           'completed task one';
-  is   $lines[2], "\x{23f3} Currently: task two",                          'currently task two';
-  like $lines[3], qr/\A\x{2705} Completed: task two \(\d+s\)\z/,           'completed task two';
-};
-
-subtest "implicit completion via START also honours had_error" => sub {
-  my $cb = cb();
-  my @lines = lines_from(sub {
-    $cb->("TASK::START::task one\n");
-    $cb->("TASK::ERROR::oops\n");
-    $cb->("TASK::START::task two\n");
-    $cb->(undef, 1);
-  });
-  like $lines[-3], qr/\A\x{2734}/,                                       'task one starts with eight-pointed star';
-  like $lines[-3], qr/Completed: task one \(\d+s\) with errors\z/,       'task one implicitly completed with errors';
-  like $lines[-1], qr/\A\x{2705} Completed: task two \(\d+s\)\z/,
-    'task two completed cleanly';
-};
-
-# ── failed EOS ────────────────────────────────────────────────────────────────
-
-subtest "failed EOS with running task dumps buffer and uses task name" => sub {
-  my $cb = cb();
-  my @lines = lines_from(sub {
-    $cb->("TASK::START::important step\n");
-    $cb->("accumulated output\n");
-    $cb->(undef, 0);
-  });
-  is scalar @lines, 3;
-  is $lines[0], "\x{23f3} Currently: important step", 'currently message present';
-  is $lines[1], 'accumulated output',                  'buffer dumped on EOS failure';
-  is $lines[2], "\x{274c} Failed: important step",     'task name used, no duration';
-};
+output_ok(
+  ["TASK::START::important step", "accumulated output", 0],
+  [
+    "$HOURGLASS Currently: important step",
+    'accumulated output',
+    "$CROSS Failed: important step",
+  ],
+  'failed EOS with running task dumps buffer and uses task name',
+);
 
 done_testing;
