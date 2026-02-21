@@ -32,8 +32,7 @@ has box_domain => (
 # error   - report to the user and stop processing
 # message - report to the user and continue
 # log     - write to syslog, continue; args may be String::Flogger-ed
-# snippet - post a snippet and return its URL
-for my $type (qw( error log message snippet )) {
+for my $type (qw( error log message )) {
   has "$type\_cb" => (
     is  => 'ro',
     isa => 'CodeRef',
@@ -43,6 +42,36 @@ for my $type (qw( error log message snippet )) {
       "handle_$type" => 'execute',
     },
   );
+}
+
+# logstream_cb is called repeatedly with complete-line chunks as they arrive
+# from the setup process.  When the process exits it is called once more with
+# (undef, $success_bool) to signal end-of-stream and convey the outcome.
+#
+# logsnippet_cb is called once at completion (success or failure) with
+# (\$accumulated_text, { success => $bool }).
+#
+# Exactly one of these must be provided; see BUILD.
+has logstream_cb => (
+  is        => 'ro',
+  isa       => 'CodeRef',
+  predicate => 'has_logstream_cb',
+);
+
+has logsnippet_cb => (
+  is        => 'ro',
+  isa       => 'CodeRef',
+  predicate => 'has_logsnippet_cb',
+);
+
+sub BUILD ($self, @) {
+  unless ($self->has_logstream_cb || $self->has_logsnippet_cb) {
+    Carp::confess("BoxManager requires one of logstream_cb or logsnippet_cb but neither was provided");
+  }
+
+  if ($self->has_logstream_cb && $self->has_logsnippet_cb) {
+    Carp::confess("BoxManager requires one of logstream_cb or logsnippet_cb but both were provided");
+  }
 }
 
 after "handle_error" => sub ($self, $error_str, @) {
@@ -321,13 +350,28 @@ async sub _setup_droplet ($self, $spec, $droplet, $key_file) {
     ),
   );
 
-  # ssh to the box and touch a file for proof of life
   $self->handle_log([ "about to run ssh: %s", \@ssh_command ]);
 
-  my ($exitcode, $stdout, $stderr) = await $self->dobby->loop->run_process(
-    capture => [ qw( exitcode stdout stderr ) ],
-    command => [ @ssh_command ],
+  my $logstream_cb;
+  if ($self->has_logstream_cb) {
+    $logstream_cb = $self->logstream_cb;
+  } else {
+    # Only logsnippet_cb: synthesize a streaming callback around it.
+
+    my $buffer = '';
+    $logstream_cb = sub ($line, $success = undef) {
+      if (defined $line) { $buffer .= $line }
+      else               { $self->logsnippet_cb->(\$buffer, { success => $success }) }
+    };
+  }
+
+  my ($exitcode, $stderr) = await $self->_run_process_streaming(
+    \@ssh_command,
+    $logstream_cb,
   );
+
+  my $exit_success = ($exitcode == 0) ? 1 : 0;
+  $logstream_cb->(undef, $exit_success);  # end-of-stream sentinel
 
   $self->handle_log([ "result of ssh: %s", Process::Status->new($exitcode)->as_string ]);
 
@@ -339,19 +383,9 @@ async sub _setup_droplet ($self, $spec, $droplet, $key_file) {
     return;
   }
 
-  my %snippet = (
-    title     => "Box setup failure ($droplet->{name})",
-    file_name => "Box-setup-failure-$droplet->{name}.txt",
-    content   => "$stderr\n----(stdout)----\n$stdout",
+  $self->handle_message(
+    "Something went wrong setting up your box.  stderr output:\n$stderr"
   );
-
-  my $url = await $self->handle_snippet(\%snippet);
-
-  if ($url) {
-    $self->handle_message("Something went wrong setting up your box.  Here's more detail: $url");
-  } else {
-    $self->handle_message("Something went wrong setting up your box.");
-  }
 
   return;
 }

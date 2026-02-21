@@ -16,7 +16,7 @@ my sub _fmt_dur ($secs) {
 When a box is being set up, the remote C<fmdev mysetup> script can emit
 directives mixed in with ordinary output lines.  This module provides a
 C<new_logstream_cb> method, which returns a stateful callback suitable for use
-as a C<textstream_cb> on L<Dobby::BoxManager>.  The callback interprets the
+as a C<logstream_cb> on L<Dobby::BoxManager>.  The callback interprets the
 directives and displays concise task-progress lines in place of the raw output
 stream.
 

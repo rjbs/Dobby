@@ -6,6 +6,8 @@ use App::Cmd::Setup -app => {};
 use v5.36.0;
 use utf8;
 
+use Dobby::Boxmate::LogStream;
+
 sub config ($self) {
   return $self->{_config} if $self->{_config};
 
@@ -18,7 +20,7 @@ sub _loop ($self) {
   $self->{_loop} //= IO::Async::Loop->new;
 }
 
-sub boxman ($self) {
+sub boxman ($self, %opts) {
   return $self->{_boxman} if $self->{_boxman};
 
   require Dobby::BoxManager;
@@ -40,22 +42,19 @@ sub boxman ($self) {
 
   $self->_loop->add($dobby);
 
+  my $logstream_cb = $opts{verbose_setup}
+    ? sub ($line, @) { print $line if defined $line }
+    : Dobby::Boxmate::LogStream->new_logstream_cb({ loop => $self->_loop });
+
   my $config = $self->config;
   $self->{_boxman} = Dobby::BoxManager->new({
     dobby       => $dobby,
     box_domain  => $config->box_domain,
 
-    error_cb    => sub ($err) { die "❌ $err\n" },
-    log_cb      => sub ($log) { say "🔸 " . String::Flogger->flog($log) },
-    message_cb  => sub ($msg) { say "🔹 $msg" },
-    snippet_cb  => sub ($arg) {
-      my $output = $arg->{content};
-      my $title  = $arg->{title} // "output";
-      say "━━━┫ begin $title ┣━━━━━━━━━";
-      say $output;
-      say "━━━┫ end ┣━━━━━━━━━━━";
-      return Future->done;
-    },
+    error_cb      => sub ($err) { die "❌ $err\n" },
+    log_cb        => sub ($log) { say "🔸 " . String::Flogger->flog($log) },
+    message_cb    => sub ($msg) { say "🔹 $msg" },
+    logstream_cb  => $logstream_cb,
   });
 }
 
