@@ -385,7 +385,8 @@ async sub _setup_droplet ($self, $spec, $droplet, $key_file) {
   }
 
   $self->handle_message(
-    "Something went wrong setting up your box.  stderr output:\n$stderr"
+    "Something went wrong setting up your box."
+    . (length $strerr ? " stderr output:\n$stderr" : q{})
   );
 
   return;
