@@ -93,6 +93,7 @@ sub new_taskstream_cb ($class, $arg = undef) {
     }
 
     $state = $state->on_line($line);
+    return;
   };
 }
 
