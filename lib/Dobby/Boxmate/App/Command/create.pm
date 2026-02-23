@@ -28,8 +28,9 @@ sub opt_spec {
     [],
     [ 'make-default|D', 'make this your default box in DNS' ],
     [],
-    [ 'custom-setup!',  'run per-user setup on inabox; default on inabox' ],
-    [ 'setup-args|S=s', 'arguments to custom setup, as a single string' ],
+    [ 'custom-setup!',   'run per-user setup on inabox; default on inabox' ],
+    [ 'setup-args|S=s',  'arguments to custom setup, as a single string' ],
+    [ 'verbose-setup',   'print all setup output verbatim instead of summarising' ],
   );
 }
 
@@ -62,7 +63,7 @@ my %INABOX_SPEC = (
 
 sub execute ($self, $opt, $args) {
   my $config = $self->app->config;
-  my $boxman = $self->boxman;
+  my $boxman = $self->app->boxman(verbose_setup => $opt->verbose_setup);
 
   my $label = $args->[0];
 

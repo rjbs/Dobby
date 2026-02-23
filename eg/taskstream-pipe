@@ -1,0 +1,50 @@
+#!/usr/bin/env perl
+use v5.36;
+
+# Read lines from STDIN and render them through the TASK:: taskstream
+# protocol, exactly as "box run --taskstream" does on the remote end.
+# Useful for testing the protocol locally:
+#
+#   perl eg/demo-taskstream | perl eg/taskstream-pipe
+
+use FindBin;
+use lib "$FindBin::Bin/../lib";
+
+use Getopt::Long::Descriptive;
+use IO::Async::Loop;
+use IO::Async::Stream;
+use Dobby::Boxmate::TaskStream;
+
+$| = 1;
+
+my ($opt, $usage) = describe_options(
+  '%c %o',
+  [ 'no-animate|n', 'disable animated output even on a terminal' ],
+  [ 'help|h',       'show this message', { shortcircuit => 1 } ],
+);
+do { print $usage->text; exit 0 } if $opt->help;
+
+binmode STDOUT, ':utf8';
+
+my $loop = IO::Async::Loop->new;
+my $cb   = Dobby::Boxmate::TaskStream->new_taskstream_cb({
+  $opt->no_animate ? () : (loop => $loop)
+});
+
+$loop->add(
+  IO::Async::Stream->new_for_stdin(
+    on_read => sub ($stream, $buffref, $eof) {
+      while ($$buffref =~ s/\A([^\n]*\n)//) {
+        $cb->($1);
+      }
+      if ($eof) {
+        $cb->($$buffref) if length $$buffref;
+        $cb->(undef, 1);
+        $loop->stop;
+      }
+      return 0;
+    },
+  )
+);
+
+$loop->run;
