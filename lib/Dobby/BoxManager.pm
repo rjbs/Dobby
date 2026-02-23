@@ -339,7 +339,11 @@ async sub _setup_droplet ($self, $spec, $droplet, $key_file) {
       '-o', 'UserKnownHostsFile=/dev/null',
       '-o', 'StrictHostKeyChecking=no',
       '-o', 'ControlMaster=no',
-      '-o', 'SetEnv=FM_TASKSTREAM=1',
+
+      # We're currently using a very old openssh on one particular system.
+      # Until that's fixed, we need to only send this sometimes.  (Honestly, we
+      # should be doing this based on the stream handling cb we get anyway...)
+      ($ENV{SSH_IS_ANCIENT} ? () : ('-o', 'SetEnv=FM_TASKSTREAM=1')),
 
     $ip_address,
     (
