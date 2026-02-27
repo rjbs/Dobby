@@ -41,7 +41,9 @@ sub execute ($self, $opt, $args) {
   my $ip       = $boxman->_ip_address_for_droplet($droplet);
   my $ssh_user = $opt->ssh_user;
 
-  my @taskstream_env = $opt->taskstream ? qw( -o SetEnv=FM_TASKSTREAM=1 ) : ();
+  my @taskstream_env = $opt->taskstream
+                     ? qw( -o SetEnv=FM_TASKSTREAM=1 -o ControlMaster=No )
+                     : ();
 
   my @ssh_cmd = (
     qw(
