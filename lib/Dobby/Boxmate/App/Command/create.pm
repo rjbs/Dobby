@@ -22,7 +22,9 @@ sub opt_spec {
         default => 'inabox',
         one_of  => [
           [ 'inabox',       "create a Fastmail-in-a-box (default behavior)" ],
-          [ 'debian',       "don't make a Fastmail-in-a-box, just Debian" ],
+          [ 'debian',       "don't make a Fastmail-in-a-box, just some Debian" ],
+          [ 'bookworm',     "don't make a Fastmail-in-a-box, just Debian 12" ],
+          [ 'trixie',       "don't make a Fastmail-in-a-box, just Debian 13" ],
           [ 'docker',       "don't make a Fastmail-in-a-box, just Docker" ],
         ]
       }
@@ -87,6 +89,8 @@ sub execute ($self, $opt, $args) {
 
     ($opt->snapshot_id  ? (run_standard_setup => 0, image_id => $opt->snapshot_id)
     :$opt->debian       ? (run_standard_setup => 0, image_id => 'debian-12-x64')
+    :$opt->bookworm     ? (run_standard_setup => 0, image_id => 'debian-12-x64')
+    :$opt->trixie       ? (run_standard_setup => 0, image_id => 'debian-13-x64')
     :$opt->docker       ? (run_standard_setup => 0, image_id => 'docker-20-04')
     :                     (%INABOX_SPEC)),
 
