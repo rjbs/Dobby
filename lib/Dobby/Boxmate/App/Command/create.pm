@@ -12,8 +12,9 @@ sub usage_desc { '%c create %o LABEL' }
 
 sub opt_spec {
   return (
-    [ 'region=s',       'what region to create the box in' ],
-    [ 'size|s=s',       'DigitalOcean slug for the Droplet size' ],
+    [ 'region=s@',      'region preference; repeat to add fallbacks in order' ],
+    [ 'any-region',     'pick any available region, ignoring region config' ],
+    [ 'size|s=s@',      'size preference; repeat to add fallbacks in order' ],
     [ 'version|v=s',    'image version to use' ],
     [ 'snapshot-id|snapshot=i',
                         'DigitalOcean snapshot to use (numeric id)' ],
@@ -44,6 +45,10 @@ sub validate_args ($self, $opt, $args) {
 
   $args->[0] =~ /\A[a-z0-9]+(?:-[a-z0-9]+)*\z/
     || die "The label needs to be a string of [a-z0-9]+ joined by dashes.\n";
+
+  if ($opt->any_region && $opt->region) {
+    die "You can't use --any-region and --region together.\n";
+  }
 
   if (defined $opt->snapshot_id) {
     $opt->snapshot_id =~ /\A[0-9]+\z/
@@ -83,9 +88,15 @@ sub execute ($self, $opt, $args) {
   my $spec = Dobby::BoxManager::ProvisionRequest->new({
     version   => $opt->version // $config->version,
     label     => $label,
-    size      => $opt->size // $config->size,
     username  => $config->username,
-    region    => lc($opt->region // $config->region),
+
+    size_preferences => ($opt->size ? $opt->size : $config->size_preferences),
+
+    ($opt->region
+      ? (region_preferences => [ map { lc } $opt->region->@* ])
+      : ($config->has_region_preferences && ! $opt->any_region
+          ? (region_preferences => $config->region_preferences)
+          : ())),
 
     ($opt->snapshot_id  ? (run_standard_setup => 0, image_id => $opt->snapshot_id)
     :$opt->debian       ? (run_standard_setup => 0, image_id => 'debian-12-x64')

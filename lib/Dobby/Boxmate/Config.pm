@@ -3,6 +3,7 @@ use Moose;
 
 use v5.36.0;
 
+use Carp ();
 use Defined::KV qw(defined_kv);
 use Path::Tiny ();
 
@@ -12,8 +13,18 @@ has ssh_key_id => (is => 'ro', isa => 'Str', predicate => 'has_ssh_key_id');
 has digitalocean_ssh_key_name => (is  => 'ro', isa => 'Str', required => 1);
 
 # ProvisioningSpec config:
-has region      => (is => 'ro', isa => 'Str', default => 'nyc3');
-has size        => (is => 'ro', isa => 'Str', default => 'g-4vcpu-16gb');
+has size_preferences => (
+  is      => 'ro',
+  isa     => 'ArrayRef[Str]',
+  default => sub { ['g-4vcpu-16gb'] },
+);
+
+has region_preferences => (
+  is        => 'ro',
+  isa       => 'ArrayRef[Str]',
+  predicate => 'has_region_preferences',
+);
+
 has username    => (is => 'ro', isa => 'Str', default => $ENV{USER});
 has version     => (is => 'ro', isa => 'Str', default => 'bookworm');
 
@@ -29,6 +40,19 @@ has setup_switches   => (
   isa => 'ArrayRef',
   default => sub {  []  },
 );
+
+sub BUILDARGS ($class, @rest) {
+  my %args = @rest == 1 ? $rest[0]->%* : @rest;
+
+  for my $attr (qw( size region )) {
+    my $pref = "${attr}_preferences";
+    Carp::confess("Config: provide at most one of '$attr' or '$pref'")
+      if exists $args{$attr} && exists $args{$pref};
+    $args{$pref} = [ delete $args{$attr} ] if exists $args{$attr};
+  }
+
+  return \%args;
+}
 
 sub load ($class) {
   my $config_file = Path::Tiny::path("~/.boxmate.toml");
