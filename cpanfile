@@ -34,8 +34,11 @@ on 'test' => sub {
   requires "Encode" => "0";
   requires "ExtUtils::MakeMaker" => "0";
   requires "File::Spec" => "0";
+  requires "HTTP::Response" => "0";
+  requires "Test::Async::HTTP" => "0";
   requires "Test::Deep" => "0";
   requires "Test::More" => "0.96";
+  requires "lib" => "0";
   requires "strict" => "0";
   requires "warnings" => "0";
 };
