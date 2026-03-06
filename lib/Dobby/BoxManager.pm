@@ -152,6 +152,17 @@ package Dobby::BoxManager::CandidateSet {
     },
   );
 
+  # Candidates that were excluded solely because of region_preferences
+  # filtering (i.e. they passed all other constraints but their region was not
+  # in the preference list).  Always empty when there are no region_preferences
+  # or when fallback_to_anywhere is true.
+  has region_excluded_candidates => (
+    isa     => 'ArrayRef[HashRef]',
+    default => sub { [] },
+    traits  => [ 'Array' ],
+    handles => { region_excluded_candidates => 'elements' },
+  );
+
   has size_preferences => (
     isa     => 'ArrayRef[Str]',
     default => sub { [] },
@@ -362,7 +373,7 @@ async sub find_provisioning_candidates ($self, %args) {
     grep { !defined $min_ram   || $_->{memory}       >= $min_ram * 1024        }
     @$all_sizes;
 
-  my @candidates;
+  my (@candidates, @region_excluded);
   for my $size (@filtered_sizes) {
     my @valid_regions = $size->{regions}->@*;
 
@@ -371,28 +382,31 @@ async sub find_provisioning_candidates ($self, %args) {
     # When region_preferences are given and fallback is off, restrict to only
     # preferred regions.  With fallback on, all valid regions are candidates
     # (the preference ordering only affects pick_one, not filtering).
+    my @excluded_regions;
     if (@$region_prefs && !$fallback) {
-      @valid_regions = grep { $want_region{$_} } @valid_regions;
+      @excluded_regions = grep { !$want_region{$_} } @valid_regions;
+      @valid_regions    = grep {  $want_region{$_} } @valid_regions;
     }
 
-    for my $region (@valid_regions) {
-      push @candidates, {
-        size         => $size->{slug},
-        region       => $region,
-        price_hourly => $size->{price_hourly},
-        vcpus        => $size->{vcpus},
-        memory       => $size->{memory},
-        disk         => $size->{disk},
-        description  => $size->{description},
-      };
-    }
+    my $meta = {
+      size         => $size->{slug},
+      price_hourly => $size->{price_hourly},
+      vcpus        => $size->{vcpus},
+      memory       => $size->{memory},
+      disk         => $size->{disk},
+      description  => $size->{description},
+    };
+
+    push @candidates,      map { +{ %$meta, region => $_ } } @valid_regions;
+    push @region_excluded, map { +{ %$meta, region => $_ } } @excluded_regions;
   }
 
   return Dobby::BoxManager::CandidateSet->new(
-    candidates         => \@candidates,
-    size_preferences   => $size_prefs,
-    region_preferences => $region_prefs,
-    prefer_proximity   => $prefer_proximity,
+    candidates                 => \@candidates,
+    region_excluded_candidates => \@region_excluded,
+    size_preferences           => $size_prefs,
+    region_preferences         => $region_prefs,
+    prefer_proximity           => $prefer_proximity,
   );
 }
 

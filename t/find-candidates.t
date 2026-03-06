@@ -57,6 +57,15 @@ sub candidates_ok ($args, $expect, $description) {
   );
 }
 
+sub excluded_ok ($args, $expect, $description) {
+  local $Test::Builder::Level = $Test::Builder::Level + 1;
+  cmp_deeply(
+    [ _get_set(%$args)->region_excluded_candidates ],
+    $expect,
+    "$description: got the expected excluded candidates",
+  );
+}
+
 sub pick_ok ($args, $expect, $description) {
   local $Test::Builder::Level = $Test::Builder::Level + 1;
   cmp_deeply(
@@ -190,6 +199,32 @@ pick_ok(
   },
   pair('medium', 'ams'),
   'prefer_proximity: preferred region is primary, cheapest size in that region wins',
+);
+
+excluded_ok(
+  {},
+  [],
+  'no region preferences: no excluded candidates',
+);
+
+excluded_ok(
+  { region_preferences => [qw(ams)], fallback_to_anywhere => 1 },
+  [],
+  'fallback_to_anywhere: no excluded candidates even with region preferences',
+);
+
+# With region_preferences=[ams] and no fallback, non-ams regions are excluded.
+# small/xlarge have no ams presence at all, so all their regions are excluded.
+# medium/large have ams, so only their non-ams regions are excluded.
+excluded_ok(
+  { region_preferences => [qw(ams)] },
+  bag(
+    pair('small',  'nyc'), pair('small',  'sfo'),
+    pair('medium', 'nyc'), pair('medium', 'sfo'),
+    pair('large',  'nyc'), pair('large',  'sfo'),
+    pair('xlarge', 'nyc'),
+  ),
+  'non-preferred regions land in region_excluded_candidates',
 );
 
 done_testing;
